@@ -9,11 +9,11 @@ Routes:
   POST /api/report      → Submit a new incident report (from edge node)
 """
 
-from __future__ import annotations
-
+import asyncio
 import hashlib
 import math
 import os
+import pathlib
 import random
 import time
 import uuid
@@ -22,8 +22,8 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # ─────────────────────────────────────────────
@@ -37,7 +37,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # Cho phép mọi origin (thay bằng domain thực khi production)
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -45,22 +45,20 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # CẤU HÌNH HỆ THỐNG
 # ─────────────────────────────────────────────
-CONSENSUS_THRESHOLD = 3        # Cần ≥3 báo cáo cùng tọa độ để xác thực
-COORD_EPSILON       = 0.0005   # ~55m — bán kính ghép tọa độ gần nhau
-MAX_ISSUES          = 50       # Giữ tối đa 50 sự cố gần nhất trong bộ nhớ
+CONSENSUS_THRESHOLD = 3
+COORD_EPSILON       = 0.0005
+MAX_ISSUES          = 50
 
 ISSUE_TYPES = ["Ổ gà", "Mặt đường lún", "Ngập nước nhẹ", "Nắp cống hỏng"]
 
-# Ảnh placeholder theo loại sự cố (public domain / Wikimedia)
 ISSUE_IMAGES = {
     "Ổ gà":           "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Pothole_on_a_road_in_India.jpg/320px-Pothole_on_a_road_in_India.jpg",
     "Mặt đường lún":  "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f8/Road_subsidence.jpg/320px-Road_subsidence.jpg",
     "Ngập nước nhẹ":  "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Urban_flooding.jpg/320px-Urban_flooding.jpg",
     "Nắp cống hỏng":  "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/Manhole_cover_broken.jpg/320px-Manhole_cover_broken.jpg",
 }
-DEFAULT_IMAGE = "https://placehold.co/320x180/f8fafc/94a3b8?text=Sự+cố+GT"
+DEFAULT_IMAGE = "https://placehold.co/320x180/f8fafc/94a3b8?text=Su+co+GT"
 
-# Tọa độ hạt giống ban đầu — trải rộng nội thành Hà Nội
 SEED_LOCATIONS = [
     (21.0285, 105.8542, "Cầu Giấy"),
     (21.0442, 105.8412, "Đống Đa"),
@@ -78,67 +76,69 @@ SEED_LOCATIONS = [
 # MÔ HÌNH DỮ LIỆU
 # ─────────────────────────────────────────────
 class Issue(BaseModel):
-    id:             str
-    lat:            float
-    lng:            float
-    type:           str
-    confidence:     float
-    nodeId:         str
-    timestamp:      str          # ISO-8601
-    isVerified:     bool
+    id: str
+    lat: float
+    lng: float
+    type: str
+    confidence: float
+    nodeId: str
+    timestamp: str
+    isVerified: bool
     consensusCount: int
-    imageUrl:       str
+    imageUrl: str
+
 
 class BlockEntry(BaseModel):
-    slot:          int
+    slot: int
     metadataLabel: int
-    lat:           float
-    lng:           float
-    issueType:     str
-    txHash:        str
-    explorerUrl:   str
+    lat: float
+    lng: float
+    issueType: str
+    txHash: str
+    explorerUrl: str
+
 
 class ReportPayload(BaseModel):
-    lat:        float = Field(..., ge=20.5,  le=21.5)
-    lng:        float = Field(..., ge=105.0, le=106.5)
-    type:       str
+    lat: float = Field(..., ge=20.5, le=21.5)
+    lng: float = Field(..., ge=105.0, le=106.5)
+    type: str
     confidence: float = Field(..., ge=0.0, le=1.0)
-    nodeId:     Optional[str] = None
+    nodeId: Optional[str] = None
+
 
 # ─────────────────────────────────────────────
 # BỘ NHỚ ẤO (In-Memory Store)
-# Trong production: thay bằng PostgreSQL / Redis
 # ─────────────────────────────────────────────
-_issues:  List[dict] = []
-_ledger:  List[dict] = []
+_issues = []   # type: List[dict]
+_ledger = []   # type: List[dict]
 _initialized = False
 
+
 # ─────────────────────────────────────────────
-# HELPER — tạo TxHash giả lập (64 ký tự hex)
+# HELPER
 # ─────────────────────────────────────────────
-def _fake_txhash(seed: str) -> str:
+def _fake_txhash(seed):
+    # type: (str) -> str
     return hashlib.sha256(seed.encode()).hexdigest() + hashlib.md5(seed.encode()).hexdigest()
 
-def _fake_slot() -> int:
-    # Cardano Preprod: slot ≈ Unix timestamp − mainnet_offset
+
+def _fake_slot():
+    # type: () -> int
     return int(time.time()) - 1_700_000_000 + random.randint(-3600, 0)
 
-def _haversine(lat1, lng1, lat2, lng2) -> float:
-    """Khoảng cách Haversine (km) giữa 2 toạ độ."""
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def _nearby_issues(lat: float, lng: float, issue_type: str) -> List[dict]:
+def _nearby_issues(lat, lng, issue_type):
+    # type: (float, float, str) -> List[dict]
     return [
         iss for iss in _issues
-        if iss["type"] == issue_type and abs(iss["lat"] - lat) < COORD_EPSILON and abs(iss["lng"] - lng) < COORD_EPSILON
+        if iss["type"] == issue_type
+        and abs(iss["lat"] - lat) < COORD_EPSILON
+        and abs(iss["lng"] - lng) < COORD_EPSILON
     ]
 
+
 # ─────────────────────────────────────────────
-# KHỞI TẠO DỮ LIỆU HẠT GIỐNG (Seed Data)
+# SEED DATA
 # ─────────────────────────────────────────────
 def _seed_initial_data():
     global _initialized
@@ -147,20 +147,20 @@ def _seed_initial_data():
     _initialized = True
 
     now_ts = time.time()
-    node_pool = [f"EdgeNode-HN-{i:03d}" for i in range(1, 20)]
+    node_pool = ["EdgeNode-HN-{:03d}".format(i) for i in range(1, 20)]
 
     for idx, (base_lat, base_lng, _district) in enumerate(SEED_LOCATIONS):
         for j in range(random.randint(2, 4)):
-            issue_type   = random.choice(ISSUE_TYPES)
-            lat          = base_lat  + random.uniform(-0.003, 0.003)
-            lng          = base_lng  + random.uniform(-0.003, 0.003)
-            confidence   = round(random.uniform(0.62, 0.98), 3)
-            node_id      = random.choice(node_pool)
-            offset_secs  = random.randint(0, 7200)
-            ts_iso       = datetime.fromtimestamp(now_ts - offset_secs, tz=timezone.utc).isoformat()
-            issue_id     = str(uuid.uuid4())[:8]
-            count        = random.randint(1, 5)
-            is_verified  = count >= CONSENSUS_THRESHOLD
+            issue_type  = random.choice(ISSUE_TYPES)
+            lat         = base_lat + random.uniform(-0.003, 0.003)
+            lng         = base_lng + random.uniform(-0.003, 0.003)
+            confidence  = round(random.uniform(0.62, 0.98), 3)
+            node_id     = random.choice(node_pool)
+            offset_secs = random.randint(0, 7200)
+            ts_iso      = datetime.fromtimestamp(now_ts - offset_secs, tz=timezone.utc).isoformat()
+            issue_id    = str(uuid.uuid4())[:8]
+            count       = random.randint(1, 5)
+            is_verified = count >= CONSENSUS_THRESHOLD
 
             issue = {
                 "id":             issue_id,
@@ -176,9 +176,8 @@ def _seed_initial_data():
             }
             _issues.append(issue)
 
-            # Ghi ledger cho sự cố đã xác thực
             if is_verified:
-                tx_seed = f"{issue_id}-{lat:.5f}-{lng:.5f}"
+                tx_seed = "{}-{:.5f}-{:.5f}".format(issue_id, lat, lng)
                 tx_hash = _fake_txhash(tx_seed)
                 _ledger.append({
                     "slot":          _fake_slot() - offset_secs,
@@ -187,23 +186,18 @@ def _seed_initial_data():
                     "lng":           round(lng, 6),
                     "issueType":     issue_type,
                     "txHash":        tx_hash,
-                    "explorerUrl":   f"https://preprod.cardanoscan.io/transaction/{tx_hash}",
+                    "explorerUrl":   "https://preprod.cardanoscan.io/transaction/{}".format(tx_hash),
                 })
 
-    # Sắp xếp: mới nhất lên đầu
     _issues.sort(key=lambda x: x["timestamp"], reverse=True)
     _ledger.sort(key=lambda x: x["slot"], reverse=True)
 
 
 # ─────────────────────────────────────────────
-# SIMULATION — Thêm sự cố ngẫu nhiên mỗi 8 giây
-# Chạy ở background khi server khởi động
+# SIMULATION
 # ─────────────────────────────────────────────
-import asyncio
-
 async def _auto_simulate():
-    """Tự động thêm sự cố mới mỗi 8 giây để demo luôn sống động."""
-    node_pool = [f"EdgeNode-HN-{i:03d}" for i in range(1, 20)]
+    node_pool = ["EdgeNode-HN-{:03d}".format(i) for i in range(1, 20)]
     while True:
         await asyncio.sleep(8)
         base_lat, base_lng, _ = random.choice(SEED_LOCATIONS)
@@ -231,13 +225,11 @@ async def _auto_simulate():
         }
         _issues.insert(0, new_issue)
 
-        # Giới hạn bộ nhớ
         if len(_issues) > MAX_ISSUES:
             _issues.pop()
 
-        # Thêm vào ledger nếu xác thực
         if is_verified:
-            tx_seed = f"{issue_id}-{lat:.5f}-{lng:.5f}"
+            tx_seed = "{}-{:.5f}-{:.5f}".format(issue_id, lat, lng)
             tx_hash = _fake_txhash(tx_seed)
             _ledger.insert(0, {
                 "slot":          _fake_slot(),
@@ -246,7 +238,7 @@ async def _auto_simulate():
                 "lng":           round(lng, 6),
                 "issueType":     issue_type,
                 "txHash":        tx_hash,
-                "explorerUrl":   f"https://preprod.cardanoscan.io/transaction/{tx_hash}",
+                "explorerUrl":   "https://preprod.cardanoscan.io/transaction/{}".format(tx_hash),
             })
             if len(_ledger) > 30:
                 _ledger.pop()
@@ -264,17 +256,17 @@ async def startup_event():
 
 @app.get("/api/stats", summary="Thống kê Dashboard")
 def get_stats():
-    total   = len(_issues)
+    total    = len(_issues)
     verified = sum(1 for i in _issues if i["isVerified"])
-    nodes   = len(set(i["nodeId"] for i in _issues))
+    nodes    = len(set(i["nodeId"] for i in _issues))
     avg_conf = (
         round(sum(i["confidence"] for i in _issues) / total * 100)
         if total > 0 else 0
     )
     return {
-        "total_alerts":      total,
-        "verified_count":    verified,
-        "node_count":        nodes,
+        "total_alerts":       total,
+        "verified_count":     verified,
+        "node_count":         nodes,
         "avg_confidence_pct": avg_conf,
     }
 
@@ -292,15 +284,16 @@ def get_blockchain():
 @app.post("/api/report", summary="Gửi báo cáo sự cố từ Edge Node")
 def post_report(payload: ReportPayload):
     if payload.type not in ISSUE_TYPES:
-        raise HTTPException(status_code=400, detail=f"Loại sự cố không hợp lệ. Chọn: {ISSUE_TYPES}")
+        raise HTTPException(
+            status_code=400,
+            detail="Loại sự cố không hợp lệ. Chọn: {}".format(ISSUE_TYPES),
+        )
 
-    node_id    = payload.nodeId or f"EdgeNode-HN-{random.randint(1, 99):03d}"
-    issue_id   = str(uuid.uuid4())[:8]
-    ts_iso     = datetime.now(tz=timezone.utc).isoformat()
-
-    # Đồng thuận: tìm các sự cố lân cận cùng loại
-    nearby     = _nearby_issues(payload.lat, payload.lng, payload.type)
-    count      = len(nearby) + 1
+    node_id     = payload.nodeId or "EdgeNode-HN-{:03d}".format(random.randint(1, 99))
+    issue_id    = str(uuid.uuid4())[:8]
+    ts_iso      = datetime.now(tz=timezone.utc).isoformat()
+    nearby      = _nearby_issues(payload.lat, payload.lng, payload.type)
+    count       = len(nearby) + 1
     is_verified = count >= CONSENSUS_THRESHOLD
 
     new_issue = {
@@ -321,7 +314,7 @@ def post_report(payload: ReportPayload):
 
     tx_hash = None
     if is_verified:
-        tx_seed = f"{issue_id}-{payload.lat:.5f}-{payload.lng:.5f}"
+        tx_seed = "{}-{:.5f}-{:.5f}".format(issue_id, payload.lat, payload.lng)
         tx_hash = _fake_txhash(tx_seed)
         _ledger.insert(0, {
             "slot":          _fake_slot(),
@@ -330,26 +323,23 @@ def post_report(payload: ReportPayload):
             "lng":           round(payload.lng, 6),
             "issueType":     payload.type,
             "txHash":        tx_hash,
-            "explorerUrl":   f"https://preprod.cardanoscan.io/transaction/{tx_hash}",
+            "explorerUrl":   "https://preprod.cardanoscan.io/transaction/{}".format(tx_hash),
         })
         if len(_ledger) > 30:
             _ledger.pop()
 
     return {
-        "success":      True,
-        "issueId":      issue_id,
-        "isVerified":   is_verified,
+        "success":        True,
+        "issueId":        issue_id,
+        "isVerified":     is_verified,
         "consensusCount": count,
-        "txHash":       tx_hash,
+        "txHash":         tx_hash,
     }
 
 
 # ─────────────────────────────────────────────
 # SERVE STATIC FILES + INDEX.HTML
 # ─────────────────────────────────────────────
-# Gắn thư mục "static" để phục vụ index.html, style.css, script.js
-# Đặt sau các API route để ưu tiên API
-import pathlib
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 if STATIC_DIR.exists():
