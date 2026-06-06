@@ -1,12 +1,10 @@
 // ============================================================
 // API BASE URL — tự động phát hiện môi trường
-// Nếu mở qua Live Server (port 5500, 3000, ...) → gọi backend port 8000
-// Nếu mở qua Python backend (port 8000) → dùng URL tương đối
+// Local (localhost/127.0.0.1) → gọi backend port 8000
+// Production (Render) → dùng URL tương đối (cùng domain)
 // ============================================================
-const BACKEND_PORT = 8000;
-const _currentPort = parseInt(window.location.port) || 80;
-const API_BASE = (_currentPort !== BACKEND_PORT)
-    ? `${window.location.protocol}//${window.location.hostname}:${BACKEND_PORT}`
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
     : '';
 
 // ============================================================
@@ -370,16 +368,15 @@ async function syncDataFromServer() {
         const statsRes = await fetch(`${API_BASE}/api/stats`);
         if (statsRes.ok) {
             const stats = await statsRes.json();
-            // Đọc an toàn cả 2 chuẩn snake_case và camelCase để tránh lỗi undefined
-            const totalAlerts = stats.total_alerts ?? stats.totalAlerts ?? 0;
-            const verifiedCount = stats.verified_count ?? stats.verifiedCount ?? 0;
-            const nodeCount = stats.node_count ?? stats.nodeCount ?? 0;
-            const avgConfidence = stats.avg_confidence_pct ?? stats.avgConfidencePct ?? 0;
+            const totalAlerts    = stats.total_alerts      ?? stats.totalAlerts      ?? 0;
+            const verifiedCount  = stats.verified_count    ?? stats.verifiedCount    ?? 0;
+            const nodeCount      = stats.node_count        ?? stats.nodeCount        ?? 0;
+            const avgConfidence  = stats.avg_confidence_pct ?? stats.avgConfidencePct ?? 0;
 
-            document.getElementById('total-alerts').innerText = totalAlerts.toLocaleString('vi-VN');
-            document.getElementById('verified-count').innerText = verifiedCount.toLocaleString('vi-VN');
-            document.getElementById('node-count').innerText = nodeCount.toLocaleString('vi-VN');
-            document.getElementById('avg-confidence').innerText = avgConfidence + '%';
+            document.getElementById('total-alerts').innerText    = totalAlerts.toLocaleString('vi-VN');
+            document.getElementById('verified-count').innerText  = verifiedCount.toLocaleString('vi-VN');
+            document.getElementById('node-count').innerText      = nodeCount.toLocaleString('vi-VN');
+            document.getElementById('avg-confidence').innerText  = avgConfidence + '%';
         }
 
         // 2. Lấy Live Feed (Issues)
@@ -419,7 +416,6 @@ document.querySelectorAll('.filter-tag').forEach(tag => {
 // ============================================================
 // KHỞI ĐỘNG HỆ THỐNG
 // ============================================================
-// Hiển thị loading state ngắn trước khi dữ liệu đầu tiên được tải
 document.getElementById('log-container').innerHTML = `
     <div class="loading-state">
         <div class="loading-spinner"></div>
@@ -427,6 +423,6 @@ document.getElementById('log-container').innerHTML = `
     </div>`;
 
 setTimeout(() => {
-    syncDataFromServer(); // Chạy ngay lần đầu tiên
-    setInterval(syncDataFromServer, CONFIG.simulation.intervalMs); // Lặp lại sau mỗi 5s
+    syncDataFromServer();
+    setInterval(syncDataFromServer, CONFIG.simulation.intervalMs);
 }, 800);
