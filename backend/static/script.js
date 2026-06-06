@@ -1,14 +1,12 @@
 // ============================================================
 // API BASE URL — tự động phát hiện môi trường
-// Local (localhost/127.0.0.1) → gọi backend port 8000
-// Production (Render) → dùng URL tương đối (cùng domain)
 // ============================================================
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? `${window.location.protocol}//${window.location.hostname}:8000`
     : '';
 
 // ============================================================
-// CONFIG — Cấu hình bản đồ và chu kỳ đồng bộ
+// CONFIG
 // ============================================================
 const CONFIG = {
     map: {
@@ -16,7 +14,7 @@ const CONFIG = {
         zoom: 13,
     },
     simulation: {
-        intervalMs: 5000, // Cứ 5 giây gọi API lấy dữ liệu mới 1 lần
+        intervalMs: 5000,
     }
 };
 
@@ -40,12 +38,57 @@ map.attributionControl.setPrefix(
 );
 
 const markersLayer = L.layerGroup().addTo(map);
-
-// Map từ issue id -> leaflet marker (để click card mở đúng popup)
 const markerRegistry = new Map();
 
 // ============================================================
-// TRẠNG THÁI HỆ THỐNG HIỆN TẠI
+// SEARCH MARKER — giống Google Maps (pin đỏ + popup tên)
+// ============================================================
+let searchMarker = null;
+
+// Icon pin đỏ giống Google Maps
+const searchIcon = L.divIcon({
+    className: '',
+    html: `
+        <div style="position:relative;width:32px;height:42px;">
+            <svg viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg" style="width:32px;height:42px;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.35));">
+                <path d="M16 0C7.163 0 0 7.163 0 16c0 10.5 14 26 16 26S32 26.5 32 16C32 7.163 24.837 0 16 0z" fill="#ea4335"/>
+                <circle cx="16" cy="16" r="7" fill="white"/>
+                <circle cx="16" cy="16" r="4" fill="#ea4335"/>
+            </svg>
+        </div>`,
+    iconSize: [32, 42],
+    iconAnchor: [16, 42],
+    popupAnchor: [0, -44],
+});
+
+function placeSearchMarker(lat, lon, name) {
+    // Xóa marker cũ nếu có
+    if (searchMarker) {
+        map.removeLayer(searchMarker);
+        searchMarker = null;
+    }
+
+    searchMarker = L.marker([lat, lon], { icon: searchIcon })
+        .addTo(map)
+        .bindPopup(`
+            <div style="font-family:'Inter',sans-serif;min-width:180px;padding:2px;">
+                <div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:4px;">📍 ${name}</div>
+                <div style="font-size:11px;color:#94a3b8;font-family:monospace;">${parseFloat(lat).toFixed(5)}, ${parseFloat(lon).toFixed(5)}</div>
+                <div style="margin-top:8px;">
+                    <button onclick="if(window.searchMarker){map.removeLayer(window.searchMarker);window.searchMarker=null;}" 
+                        style="font-size:11px;padding:3px 8px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;background:#f8fafc;color:#64748b;">
+                        ✕ Xóa điểm đánh dấu
+                    </button>
+                </div>
+            </div>`, { maxWidth: 240 })
+        .openPopup();
+
+    // Expose ra window để nút xóa trong popup có thể dùng
+    window.searchMarker = searchMarker;
+}
+
+// ============================================================
+// TRẠNG THÁI HỆ THỐNG
 // ============================================================
 let rawIssuesList = [];
 let currentFilterType = 'all';
@@ -73,14 +116,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ============================================================
-// SIDEBAR TOGGLE — cập nhật vị trí zoom control theo sidebar
+// SIDEBAR TOGGLE
 // ============================================================
 const sidebar = document.querySelector('.main-sidebar');
 const toggleBtn = document.getElementById('toggleSidebar');
 
 toggleBtn.addEventListener('click', () => {
     sidebar.classList.toggle('collapsed');
-    // Đẩy lại viewport bản đồ sau khi animation xong
     setTimeout(() => map.invalidateSize(), 320);
 });
 
@@ -90,7 +132,6 @@ toggleBtn.addEventListener('click', () => {
 const searchInput = document.getElementById('map-search');
 const searchBox  = searchInput.closest('.search-box');
 
-// Tạo dropdown suggestions
 const dropdown = document.createElement('div');
 dropdown.id = 'search-suggestions';
 dropdown.style.cssText = `
@@ -139,7 +180,7 @@ function renderSuggestions(results) {
             border-bottom: 1px solid #f1f5f9;
         `;
         row.innerHTML = `
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" flex-shrink="0" style="flex-shrink:0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea4335" stroke-width="2.5" style="flex-shrink:0">
                 <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
             </svg>
             <div style="overflow:hidden;">
@@ -149,7 +190,7 @@ function renderSuggestions(results) {
         row.addEventListener('mouseenter', () => { row.style.background = '#f8fafc'; });
         row.addEventListener('mouseleave', () => { row.style.background = idx === activeSuggestionIdx ? '#f0f9ff' : ''; });
         row.addEventListener('mousedown', (e) => {
-            e.preventDefault(); // ngăn blur trước khi click xử lý
+            e.preventDefault();
             selectSuggestion(idx);
         });
         dropdown.appendChild(row);
@@ -160,8 +201,19 @@ function renderSuggestions(results) {
 function selectSuggestion(idx) {
     const item = suggestions[idx];
     if (!item) return;
-    searchInput.value = item.display_name.split(',').slice(0, 2).join(',').trim();
-    map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16, { animate: true });
+
+    const lat = parseFloat(item.lat);
+    const lon = parseFloat(item.lon);
+    const name = item.display_name.split(',').slice(0, 2).join(',').trim();
+
+    searchInput.value = name;
+
+    // Bay đến địa điểm
+    map.flyTo([lat, lon], 16, { animate: true, duration: 1.2 });
+
+    // Đặt marker sau khi animation xong
+    setTimeout(() => placeSearchMarker(lat, lon, name), 1000);
+
     clearDropdown();
 }
 
@@ -184,7 +236,6 @@ searchInput.addEventListener('input', () => {
 });
 
 searchInput.addEventListener('keydown', (e) => {
-    const rows = dropdown.querySelectorAll('div[style*="cursor: pointer"]');
     if (e.key === 'ArrowDown') {
         e.preventDefault();
         activeSuggestionIdx = Math.min(activeSuggestionIdx + 1, suggestions.length - 1);
@@ -210,7 +261,7 @@ searchInput.addEventListener('blur', () => {
 });
 
 // ============================================================
-// POPUP TEMPLATE
+// POPUP TEMPLATE (issue)
 // ============================================================
 function createPopupContent(issue) {
     const verifiedLabel = issue.isVerified
@@ -243,7 +294,7 @@ function createPopupContent(issue) {
 }
 
 // ============================================================
-// RENDER DỮ LIỆU SỰ CỐ (LIVE FEED & MARKERS)
+// RENDER LIVE FEED & MARKERS
 // ============================================================
 function renderFeed() {
     markersLayer.clearLayers();
@@ -265,7 +316,7 @@ function renderFeed() {
     }
 
     filtered.forEach((issue) => {
-        const isVerified = issue.isVerified;
+        const isVerified  = issue.isVerified;
         const markerColor = isVerified ? '#10b981' : '#ef4444';
         const fillColor   = isVerified ? '#34d399' : '#f87171';
 
@@ -306,7 +357,6 @@ function renderFeed() {
                 </span>
             </div>`;
 
-        // Click vào BADGE → flyTo mượt + mở popup
         card.querySelector('.map-jump-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             document.querySelectorAll('.feed-card').forEach(c => c.classList.remove('selected'));
@@ -315,7 +365,6 @@ function renderFeed() {
             setTimeout(() => marker.openPopup(), 1100);
         });
 
-        // Click vào phần còn lại của card → setView nhanh + mở popup
         card.addEventListener('click', () => {
             map.setView([issue.lat, issue.lng], 16, { animate: true, duration: 0.6 });
             marker.openPopup();
@@ -364,22 +413,20 @@ function renderBlockchainLedger(blocks) {
 // ============================================================
 async function syncDataFromServer() {
     try {
-        // 1. Lấy Dashboard Stats
         const statsRes = await fetch(`${API_BASE}/api/stats`);
         if (statsRes.ok) {
             const stats = await statsRes.json();
-            const totalAlerts    = stats.total_alerts      ?? stats.totalAlerts      ?? 0;
-            const verifiedCount  = stats.verified_count    ?? stats.verifiedCount    ?? 0;
-            const nodeCount      = stats.node_count        ?? stats.nodeCount        ?? 0;
-            const avgConfidence  = stats.avg_confidence_pct ?? stats.avgConfidencePct ?? 0;
+            const totalAlerts   = stats.total_alerts       ?? stats.totalAlerts      ?? 0;
+            const verifiedCount = stats.verified_count     ?? stats.verifiedCount    ?? 0;
+            const nodeCount     = stats.node_count         ?? stats.nodeCount        ?? 0;
+            const avgConfidence = stats.avg_confidence_pct ?? stats.avgConfidencePct ?? 0;
 
-            document.getElementById('total-alerts').innerText    = totalAlerts.toLocaleString('vi-VN');
-            document.getElementById('verified-count').innerText  = verifiedCount.toLocaleString('vi-VN');
-            document.getElementById('node-count').innerText      = nodeCount.toLocaleString('vi-VN');
-            document.getElementById('avg-confidence').innerText  = avgConfidence + '%';
+            document.getElementById('total-alerts').innerText   = totalAlerts.toLocaleString('vi-VN');
+            document.getElementById('verified-count').innerText = verifiedCount.toLocaleString('vi-VN');
+            document.getElementById('node-count').innerText     = nodeCount.toLocaleString('vi-VN');
+            document.getElementById('avg-confidence').innerText = avgConfidence + '%';
         }
 
-        // 2. Lấy Live Feed (Issues)
         const issuesRes = await fetch(`${API_BASE}/api/issues`);
         if (issuesRes.ok) {
             const rawData = await issuesRes.json();
@@ -390,7 +437,6 @@ async function syncDataFromServer() {
             renderFeed();
         }
 
-        // 3. Lấy Blockchain Ledger
         const ledgerRes = await fetch(`${API_BASE}/api/blockchain`);
         if (ledgerRes.ok) {
             const blocks = await ledgerRes.json();
@@ -402,7 +448,7 @@ async function syncDataFromServer() {
 }
 
 // ============================================================
-// BỘ LỌC TÌM KIẾM THEO THẺ TAG
+// BỘ LỌC TAG
 // ============================================================
 document.querySelectorAll('.filter-tag').forEach(tag => {
     tag.addEventListener('click', (e) => {
@@ -414,7 +460,7 @@ document.querySelectorAll('.filter-tag').forEach(tag => {
 });
 
 // ============================================================
-// KHỞI ĐỘNG HỆ THỐNG
+// KHỞI ĐỘNG
 // ============================================================
 document.getElementById('log-container').innerHTML = `
     <div class="loading-state">
