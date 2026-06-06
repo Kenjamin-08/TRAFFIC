@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Hệ thống giám sát hạ tầng giao thông phi tập trung, ứng dụng AI điện toán biên và Blockchain Cardano — Nhóm Nghiên Cứu AI & Blockchain UTC.">
+    <title>AI TRAFFIC UTC — Hệ Thống Giám Sát Hạ Tầng Giao Thông Phi Tập Trung</title>
+    <link rel="icon" type="image/png" href="utc-logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="map"></div>
+    <div class="map-top-controls">
+        <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="map-search"
+                placeholder="Tìm kiếm vị trí, tuyến đường tại Hà Nội..."
+                aria-label="Tìm kiếm địa điểm" />
+        </div>
+        <div class="filter-tags">
+            <button class="filter-tag active" data-type="all">Tất cả</button>
+            <button class="filter-tag" data-type="Ổ gà">⚠️ Ổ gà</button>
+            <button class="filter-tag" data-type="Mặt đường lún">📉 Vết lún</button>
+            <button class="filter-tag" data-type="Ngập nước nhẹ">🌊 Ngập nước</button>
+            <button class="filter-tag" data-type="Nắp cống hỏng">🚫 Nắp cống</button>
+        </div>
+    </div>
+    <div class="main-sidebar">
+        <div class="sidebar-header">
+            <div class="brand-container">
+                <img src="utc-logo.png" alt="Logo trường Đại học GTVT" class="app-logo" width="36" height="36" />
+                <div class="brand-text">
+                    <h1>AI TRAFFIC <span class="highlight">UTC</span></h1>
+                    <p>Decentralized Edge-AI Grid</p>
+                </div>
+            </div>
+            <div class="system-status" aria-label="Trạng thái: đang hoạt động">
+                <span class="status-indicator blinking"></span>
+                <span class="status-text">LIVE</span>
+            </div>
+        </div>
+        <div class="network-banner">
+            <div class="net-info">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span>Mạng đồng thuận: <b>Cardano Preprod Testnet</b></span>
+            </div>
+            <div class="gateway-tag">Blockfrost API</div>
+        </div>
+        <div class="statistics-grid">
+            <div class="stat-box red">
+                <span class="stat-label">Tổng sự cố phát hiện</span>
+                <span class="stat-value" id="total-alerts">0</span>
+            </div>
+            <div class="stat-box green">
+                <span class="stat-label">Đã đồng thuận đám đông</span>
+                <span class="stat-value" id="verified-count">0</span>
+            </div>
+            <div class="stat-box purple">
+                <span class="stat-label">Edge Node active</span>
+                <span class="stat-value" id="node-count">0</span>
+            </div>
+            <div class="stat-box orange">
+                <span class="stat-label">Độ tin cậy TB mạng</span>
+                <span class="stat-value" id="avg-confidence">0%</span>
+            </div>
+        </div>
+        <div class="content-tabs" role="tablist">
+            <button class="tab-btn active" data-tab="live-feed" role="tab" aria-selected="true">
+                DỮ LIỆU SỰ CỐ (LIVE FEED)
+            </button>
+            <button class="tab-btn" data-tab="blockchain-log" role="tab" aria-selected="false">
+                SỔ CÁI MINH BẠCH (LEDGER)
+            </button>
+        </div>
+        <div id="tab-live-feed" class="tab-panel active" role="tabpanel">
+            <div class="panel-meta">Cập nhật tự động từ các mắt thần di động (Camera/Smartphone)</div>
+            <div class="feed-container" id="log-container"></div>
+        </div>
+        <div id="tab-blockchain-log" class="tab-panel" role="tabpanel">
+            <div class="panel-meta">TxHash 64-ký-tự ghi nhận tọa độ GPS bất biến lên Cardano Blockchain</div>
+            <div class="blockchain-container" id="blockchain-container"></div>
+        </div>
+        <div class="sidebar-footer">
+            <div class="clock" id="current-time" aria-live="polite">--:--:--</div>
+            <div class="copyright">&copy; 2026 Nhóm Nghiên Cứu AI &amp; Blockchain UTC</div>
+        </div>
+    </div>
+    <button class="toggle-sidebar-btn" id="toggleSidebar" aria-label="Đóng/Mở bảng điều khiển">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"/>
+        </svg>
+    </button>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
